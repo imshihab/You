@@ -44,6 +44,7 @@ you index.js               to create a new index.js file
 you index                  to create a new index directory
 you index.js route.js      to create multiple files
 you index route            to create multiple directory
+you FolderName/            to explicitly create a directory
 you index.js -d            to delete a file
 you index -d               to delete a directory
 you index.js -i            to get info of a file
@@ -377,7 +378,20 @@ int main(int argc, char* argv[]) {
             std::cout << DefaultLog;
             return 0;
         } else if (!isDash) {
-            fs::path filePath = (root / filename).lexically_normal();
+            // Detect an explicit trailing "/" -- used only to mark a path as
+            // a directory at creation time. The slash itself is stripped so
+            // it does not become part of the filesystem path. It has no
+            // meaning for -d / -i; those just operate on the resolved path.
+            bool dirMarker = filename.size() > 1 && filename.back() == '/';
+            std::string cleanName = filename;
+            if (dirMarker) {
+                while (!cleanName.empty() && cleanName.back() == '/') {
+                    cleanName.pop_back();
+                }
+                if (cleanName.empty()) cleanName = "/";
+            }
+
+            fs::path filePath = (root / cleanName).lexically_normal();
             fs::path directory = filePath.parent_path();
             std::string baseName = filePath.filename().string();
             bool isFile = !nodeExtname(baseName).empty();
@@ -393,9 +407,15 @@ int main(int argc, char* argv[]) {
 
             if (!dirExists && falsehood) {
                 fs::create_directories(directory, ec);
-                std::ofstream ofs(filePath, std::ios::trunc | std::ios::binary);
+                if (dirMarker) {
+                    fs::create_directories(filePath, ec);
+                } else {
+                    std::ofstream ofs(filePath, std::ios::trunc | std::ios::binary);
+                }
             } else if (dirExists && falsehood) {
-                if (isFile || hiddenFile) {
+                if (dirMarker) {
+                    fs::create_directories(filePath, ec);
+                } else if (isFile || hiddenFile) {
                     if (!fs::exists(filePath, ec)) {
                         std::ofstream ofs(filePath, std::ios::trunc | std::ios::binary);
                     } else {
