@@ -14,9 +14,31 @@ nothing to do with the npm package of the same name.
 
 - **Create** files or directories with a single short command
 - **Create multiple** files or directories in one invocation
-- **Delete** files or directories with `-d`
+- **Brace expansion**: `you store-{a,b,name}.js` creates three files
+- **`cd:` chain**: `you cd:src components/Button.tsx index.ts` first creates
+  `src/`, then operates inside it; the last `cd:` wins
+- **`.youconfig`** lookup: arguments like `$(home)/note.txt` resolve to
+  `/home/note.txt` when `home: /home` is in a `.youconfig` file (walked up
+  from cwd); if not found, you're prompted to fall back to cwd
+- **Delete** with `-d`, `-rf` (file only), `-rd` (dir only)
 - **Inspect** files or directories with `-i` (formatted like Node's
   `console.table`, just for visual familiarity)
+- **Rename** with `-rn old=new`
+- **Move** with `-mv old=new`
+- **Copy** with `-c old=new` (file or directory tree)
+- **Trash** with `-trash target` — moves target into `./.trash/<timestamp>/`
+  and writes a `meta.json` sidecar with the original absolute path so it
+  can be restored later
+- **Tree view** with `-t[=N]` (default depth 3, skips `node_modules` and
+  `.git`)
+- **Print working directory** with `-pwd`
+- **Open / list** with `-o` — for a directory, prints a text listing; for a
+  file, dumps its contents (portable substitute for "open in file explorer")
+- **Run commands** with `you run:Folder="cmd1 &&& cmd2"` — chdir into the
+  folder (creating it if needed) and run each command in sequence via the
+  system shell
+- **Interactive settings** with `you --setting` — prompts for editor, trash
+  path, tree depth, confirm-on-create and writes a `setting.json`
 - **Touch** (update mtime) a file if it already exists
 - **Cross-platform** file time handling (Windows `FILETIME`, macOS birth time,
   Linux ctime fallback)
@@ -79,7 +101,97 @@ you [fileName / directoryName] [flag]
 | `--help`, `-h`, `--h` | Show the usage message            |
 | `--version`, `-v`, `--v` | Display the version           |
 | `-d`                | Delete a file or directory           |
+| `-rf`               | Delete a file (errors on directory)  |
+| `-rd`               | Delete a directory (errors on file) |
 | `-i`                | Get information about a file or directory |
+| `-o target`         | Show a text listing of a directory (or dump a file) |
+| `-t[=N]`            | Tree view of the cwd (default depth 3); skips `node_modules` and `.git` |
+| `-pwd`              | Print the absolute current working directory |
+| `--setting`         | Interactive prompts that write `setting.json` |
+| `-rn old=new`       | Rename a file or directory           |
+| `-mv old=new`       | Move a file or directory             |
+| `-c  old=new`       | Copy a file or directory tree        |
+| `-trash target`     | Move target into `./.trash/<timestamp>/` with a `meta.json` sidecar |
+
+### Prefixes (creation only)
+
+| Prefix           | Description                                              |
+| ---------------- | -------------------------------------------------------- |
+| `name/`          | Trailing `/` => always create a directory                |
+| `cd:Folder`      | Chdir into `Folder` for subsequent args; the last `cd:` wins |
+| `$(name)/...`    | Resolve via `.youconfig` (walked up from cwd); fallback to cwd with a prompt |
+
+### Examples
+
+```bash
+# Create a new file
+you index.js
+
+# Create a new directory
+you index
+
+# Create multiple files at once
+you index.js route.js
+
+# Create multiple directories at once
+you index route
+
+# Brace expansion: store-first.js, store-2nd.js, store-name.js
+you store-{first,2nd,name}.js
+
+# cd: chain: creates src/, then components/Button.tsx and index.ts inside it
+you cd:src components/Button.tsx index.ts
+
+# $(name) prefix: looks up "home" in .youconfig
+you $(home)/note.txt
+
+# Explicitly mark a path as a directory (trailing "/")
+# Only matters at creation time; the slash is stripped before any -d / -i.
+you FolderName/
+
+# Delete a file
+you index.js -d
+
+# Delete a directory (and its contents)
+you index -d
+
+# Delete only files / only directories with stricter flags
+you index.js -rf
+you index     -rd
+
+# Rename
+you old.txt -rn new.txt
+
+# Move
+you src/a.ts -mv src/b/a.ts
+
+# Copy
+you file.txt -c copy.txt
+
+# Trash (move to ./.trash/<ts>/)
+you secret -trash
+
+# Show info for a file (size, mime, times, ...)
+you index.js -i
+
+# Show info for a directory
+you index -i
+
+# Text-mode listing of a directory
+you src -o
+
+# Tree view (depth 2)
+you -t=2
+
+# Print cwd
+you -pwd
+
+# Run commands inside a folder (created if missing)
+you run:app="npm install &&& npm run dev"
+
+# Interactive settings
+you --setting
+```
 
 ### Examples
 
