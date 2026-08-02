@@ -30,7 +30,8 @@ nothing to do with the npm package of the same name.
   and writes a `meta.json` sidecar with the original absolute path so it
   can be restored later
 - **Tree view** with `-t[=N]` (default depth 3, skips `node_modules` and
-  `.git`)
+  `.git`; directories are shown with a trailing `/`, colored bold blue when
+  stdout is a TTY — set `NO_COLOR` to disable colors)
 - **Print working directory** with `-pwd`
 - **Open / list** with `-o` — for a directory, prints a text listing; for a
   file, dumps its contents (portable substitute for "open in file explorer")
@@ -105,7 +106,7 @@ you [fileName / directoryName] [flag]
 | `-rd`               | Delete a directory (errors on file) |
 | `-i`                | Get information about a file or directory |
 | `-o target`         | Show a text listing of a directory (or dump a file) |
-| `-t[=N]`            | Tree view of the cwd (default depth 3); skips `node_modules` and `.git` |
+| `-t[=N]`            | Tree view of the cwd (default depth 3); skips `node_modules` and `.git`; directories get a trailing `/`, colored bold blue on a TTY (`NO_COLOR` disables) |
 | `-pwd`              | Print the absolute current working directory |
 | `--setting`         | Interactive prompts that write `setting.json` |
 | `-rn old=new`       | Rename a file or directory           |
@@ -159,14 +160,14 @@ you index -d
 you index.js -rf
 you index     -rd
 
-# Rename
-you old.txt -rn new.txt
+# Rename (note: -rn/-mv/-c take an 'old=new' spec)
+you -rn old.txt=new.txt
 
 # Move
-you src/a.ts -mv src/b/a.ts
+you -mv src/a.ts=src/b/a.ts
 
 # Copy
-you file.txt -c copy.txt
+you -c file.txt=copy.txt
 
 # Trash (move to ./.trash/<ts>/)
 you secret -trash
@@ -191,38 +192,6 @@ you run:app="npm install &&& npm run dev"
 
 # Interactive settings
 you --setting
-```
-
-### Examples
-
-```bash
-# Create a new file
-you index.js
-
-# Create a new directory
-you index
-
-# Create multiple files at once
-you index.js route.js
-
-# Create multiple directories at once
-you index route
-
-# Explicitly mark a path as a directory (trailing "/")
-# Only matters at creation time; the slash is stripped before any -d / -i.
-you FolderName/
-
-# Delete a file
-you index.js -d
-
-# Delete a directory (and its contents)
-you index -d
-
-# Show info for a file (size, mime, times, ...)
-you index.js -i
-
-# Show info for a directory
-you index -i
 ```
 
 If a file is requested and already exists, its modification time is updated

@@ -41,6 +41,8 @@ namespace fs = std::filesystem;
 
 // ---------------------------------------------------------------------------
 // Usage text
+//
+// NOTE: keep this in sync with the "Usage" / "Flags" sections of README.md.
 // ---------------------------------------------------------------------------
 static const char* const DefaultLog =
 R"(Usage:
@@ -80,8 +82,8 @@ Examples:
   you FolderName/
   you store-{a,b,name}.js
   you cd:src components/Button.tsx
-  you old.txt -rn new.txt
-  you file.txt -c copy.txt
+  you -rn old.txt=new.txt
+  you -c file.txt=copy.txt
   you secret -trash
   you -t=2
   you run:app="ls -la &&& pwd"
@@ -94,12 +96,26 @@ static void log(const std::string& err) {
     std::cerr << "File or Directory does not exist or sometinge else.... \n" << err << "\n";
 }
 
+// ---------------------------------------------------------------------------
+// trim(): strip leading/trailing whitespace (incl. \r from Windows line ends)
+// ---------------------------------------------------------------------------
+static std::string trim(const std::string& s) {
+    size_t a = 0, b = s.size();
+    while (a < b && std::isspace(static_cast<unsigned char>(s[a]))) ++a;
+    while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1]))) --b;
+    return s.substr(a, b - a);
+}
+
 static bool askYesNo(const std::string& prompt, bool defaultYes) {
     std::cout << prompt << (defaultYes ? " [Y/n] " : " [y/N] ") << std::flush;
     std::string line;
     if (!std::getline(std::cin, line)) return defaultYes;
+    // Original semantics: drop ALL whitespace, then lowercase.
     std::string s;
-    for (char c : line) if (!std::isspace(static_cast<unsigned char>(c))) s += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    for (char c : line) {
+        if (std::isspace(static_cast<unsigned char>(c))) continue;
+        s += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
     if (s.empty()) return defaultYes;
     return s == "y" || s == "yes";
 }
@@ -120,7 +136,9 @@ static std::string nodeExtname(const std::string& base) {
 // Brace expansion: a single name may contain {a,b,c} groups; the result is
 // the cartesian product of all groups. e.g. "store-{a,b}-{1,2}.js" ->
 //   "store-a-1.js", "store-a-2.js", "store-b-1.js", "store-b-2.js"
-// Nested braces are handled by a small recursive expansion.
+// Groups are processed left-to-right and are NOT nested: a '{' group ends at
+// the first following '}', so genuinely nested braces like {a,{b,c}} are not
+// supported (the outer group sees '{b,c' as one of its parts).
 // ---------------------------------------------------------------------------
 static std::vector<std::string> expandBraces(const std::string& s) {
     std::vector<std::string> out{""};
@@ -393,14 +411,30 @@ static void printInfoTable(const std::vector<std::pair<std::string, Cell>>& rows
 }
 
 // ---------------------------------------------------------------------------
+// Shared "does this path exist?" guards
+// ---------------------------------------------------------------------------
+static bool requirePath(const fs::path& p) {
+    std::error_code ec;
+    if (fs::exists(p, ec)) return true;
+    log("ENOENT: no such file or directory, stat '" + p.string() + "'");
+    return false;
+}
+
+// "Pardon! can't find the file/directory to <verb>" flavour used by
+// rename / move / copy / trash.
+static bool checkTarget(const fs::path& p, const char* verb) {
+    std::error_code ec;
+    if (fs::exists(p, ec)) return true;
+    log("Pardon! can't find the file/directory to " + std::string(verb) + ", stat '" + p.string() + "'");
+    return false;
+}
+
+// ---------------------------------------------------------------------------
 // -i : print file/directory info
 // ---------------------------------------------------------------------------
 static void printInfo(const fs::path& filePath) {
+    if (!requirePath(filePath)) return;
     std::error_code ec;
-    if (!fs::exists(filePath, ec)) {
-        log("ENOENT: no such file or directory, stat '" + filePath.string() + "'");
-        return;
-    }
     bool isDirectory = fs::is_directory(filePath, ec);
     FileTimes times = getFileTimes(filePath);
     uintmax_t size = isDirectory ? 0 : fs::file_size(filePath, ec);
@@ -428,11 +462,8 @@ static void printInfo(const fs::path& filePath) {
 // Delete / rename / move / copy
 // ---------------------------------------------------------------------------
 static void deletePath(const fs::path& filePath) {
+    if (!requirePath(filePath)) return;
     std::error_code ec;
-    if (!fs::exists(filePath, ec)) {
-        log("ENOENT: no such file or directory, stat '" + filePath.string() + "'");
-        return;
-    }
     if (fs::is_directory(filePath, ec)) {
         fs::remove_all(filePath, ec);
     } else {
@@ -442,11 +473,8 @@ static void deletePath(const fs::path& filePath) {
 }
 
 static void deleteKind(const fs::path& p, PathKind kind) {
+    if (!requirePath(p)) return;
     std::error_code ec;
-    if (!fs::exists(p, ec)) {
-        log("ENOENT: no such file or directory, stat '" + p.string() + "'");
-        return;
-    }
     bool isDir = fs::is_directory(p, ec);
     if (kind == PathKind::File && isDir) {
         log("'" + p.string() + "' is a directory; use -rd to remove directories");
@@ -467,60 +495,41 @@ static bool splitEq(const std::string& s, std::string& left, std::string& right)
     return true;
 }
 
-static void doRename(const fs::path& oldP, const fs::path& newP) {
+// If `dest` is an existing directory, append the source basename (like
+// `cp`/`mv` when the destination is a folder); otherwise use dest as-is.
+static fs::path resolveDest(const fs::path& src, const fs::path& dest) {
     std::error_code ec;
-    if (!fs::exists(oldP, ec)) {
-        log("Pardon! can't find the file/directory to rename, stat '" + oldP.string() + "'");
-        return;
-    }
-    if (newP.empty()) {
-        log("Must given a path");
-        return;
-    }
+    if (fs::is_directory(dest, ec)) return dest / src.filename();
+    return dest;
+}
+
+static void doRename(const fs::path& oldP, const fs::path& newP) {
+    if (!checkTarget(oldP, "rename")) return;
+    std::error_code ec;
     fs::rename(oldP, newP, ec);
     if (ec) log(ec.message());
 }
 
 static void doMove(const fs::path& oldP, const fs::path& newP) {
+    if (!checkTarget(oldP, "move")) return;
     std::error_code ec;
-    if (!fs::exists(oldP, ec)) {
-        log("Pardon! can't find the directory/file to move, stat '" + oldP.string() + "'");
-        return;
-    }
-    if (newP.empty()) {
-        log("Must given a path");
-        return;
-    }
-    if (fs::is_directory(newP, ec)) {
-        fs::path target = newP / oldP.filename();
-        fs::rename(oldP, target, ec);
-    } else {
-        fs::create_directories(newP.parent_path(), ec);
-        fs::rename(oldP, newP, ec);
-    }
+    fs::path target = resolveDest(oldP, newP);
+    fs::create_directories(target.parent_path(), ec);
+    fs::rename(oldP, target, ec);
     if (ec) log(ec.message());
 }
 
 static void doCopy(const fs::path& oldP, const fs::path& newP) {
+    if (!checkTarget(oldP, "copy")) return;
     std::error_code ec;
-    if (!fs::exists(oldP, ec)) {
-        log("Pardon! can't find the directory/file to copy, stat '" + oldP.string() + "'");
-        return;
-    }
-    if (newP.empty()) {
-        log("Must given a path");
-        return;
-    }
     bool srcIsDir = fs::is_directory(oldP, ec);
-    fs::path target = newP;
+    fs::path target = resolveDest(oldP, newP);
     if (srcIsDir) {
-        if (fs::is_directory(newP, ec)) target = newP / oldP.filename();
         fs::create_directories(target, ec);
         fs::copy(oldP, target,
             fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
     } else {
-        if (fs::is_directory(newP, ec)) target = newP / oldP.filename();
-        else fs::create_directories(target.parent_path(), ec);
+        fs::create_directories(target.parent_path(), ec);
         fs::copy_file(oldP, target, fs::copy_options::overwrite_existing, ec);
     }
     if (ec) log(ec.message());
@@ -552,17 +561,15 @@ static std::string isoNow() {
 }
 
 static void doTrash(const fs::path& p) {
+    if (!checkTarget(p, "trash")) return;
+    // Capture the original absolute path before renaming the target away.
     std::error_code ec;
-    if (!fs::exists(p, ec)) {
-        log("Pardon! can't find the file/directory to trash, stat '" + p.string() + "'");
-        return;
-    }
+    std::string origAbsolute = fs::absolute(p, ec).string();
     fs::path trashRoot = fs::current_path() / ".trash" / std::to_string(nowUnix());
     fs::create_directories(trashRoot, ec);
     if (ec) { log(ec.message()); return; }
-    fs::path dest = trashRoot / p.filename();
-    // rename prefix marker to .trash__<name> so a future restore is unambiguous
     std::string origName = p.filename().string();
+    // rename prefix marker to .trash__<name> so a future restore is unambiguous
     std::string markedName = ".trash__" + origName;
     fs::path markedDest = trashRoot / markedName;
     fs::rename(p, markedDest, ec);
@@ -573,7 +580,7 @@ static void doTrash(const fs::path& p) {
     std::ofstream out(meta, std::ios::trunc | std::ios::binary);
     if (out) {
         out << "{\n"
-            << "  \"original\": \"" << fs::absolute(p, ec).string() << "\",\n"
+            << "  \"original\": \"" << origAbsolute << "\",\n"
             << "  \"trashed_at\": \"" << isoNow() << "\",\n"
             << "  \"name\": \"" << origName << "\"\n"
             << "}\n";
@@ -591,15 +598,56 @@ static bool shouldSkip(const std::string& name) {
 // Sentinel value for "unlimited depth" (e.g. `-t=`).
 static constexpr int kTreeInfiniteDepth = -1;
 
+// ---------------------------------------------------------------------------
+// ANSI colors for the tree view. Directories are shown in bold blue (the
+// same convention as `ls --color`); regular files stay uncolored. Colors are
+// only emitted when stdout is a TTY that supports ANSI escapes and the user
+// hasn't opted out via NO_COLOR / TERM=dumb.
+// ---------------------------------------------------------------------------
+static constexpr const char* kAnsiReset = "\033[0m";
+static constexpr const char* kAnsiDir   = "\033[1;34m"; // bold blue
+
+static bool supportsAnsiColor() {
+    static const bool cached = []() -> bool {
+        const char* noColor = std::getenv("NO_COLOR");
+        if (noColor && *noColor) return false;
+        const char* term = std::getenv("TERM");
+        if (term && std::string(term) == "dumb") return false;
+#ifdef _WIN32
+        // Enable virtual-terminal processing; this only succeeds when stdout
+        // is an actual console, so a single check covers TTY detection too.
+        HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+        DWORD mode = 0;
+        if (h == INVALID_HANDLE_VALUE || !GetConsoleMode(h, &mode)) return false;
+        mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+        return SetConsoleMode(h, mode) != 0;
+#else
+        return isatty(STDOUT_FILENO) != 0;
+#endif
+    }();
+    return cached;
+}
+
+// Colorize a tree entry name; `isDir` and `color` control whether any ANSI
+// escape is emitted (the caller decides once whether this stream is color
+// capable).
+static std::string colorName(const std::string& name, bool isDir, bool color) {
+    if (!isDir || !color) return name;
+    return std::string(kAnsiDir) + name + kAnsiReset;
+}
+
 static void walkTree(const fs::path& root, int depth, int maxDepth,
-                     const std::string& prefix, bool last, std::ostream& out) {
+                     const std::string& prefix, bool last, bool color, std::ostream& out) {
     if (maxDepth != kTreeInfiniteDepth && depth > maxDepth) return;
     std::error_code ec;
+    // Append a trailing "/" to directory names so folders stand out from files.
+    bool isDir = fs::is_directory(root, ec);
+    std::string name = colorName(root.filename().string() + (isDir ? "/" : ""), isDir, color);
     if (depth == 0) {
-        out << root.filename().string() << "\n";
+        out << name << "\n";
     } else {
         out << prefix << (last ? "\u2514\u2500\u2500 " : "\u251c\u2500\u2500 ")
-            << root.filename().string() << "\n";
+            << name << "\n";
     }
 
     if (maxDepth != kTreeInfiniteDepth && depth == maxDepth) return;
@@ -617,28 +665,21 @@ static void walkTree(const fs::path& root, int depth, int maxDepth,
     for (size_t i = 0; i < entries.size(); ++i) {
         bool isLast = (i + 1 == entries.size());
         std::string nextPrefix = prefix + (last ? "    " : "\u2502   ");
-        walkTree(entries[i].path(), depth + 1, maxDepth, nextPrefix, isLast, out);
+        walkTree(entries[i].path(), depth + 1, maxDepth, nextPrefix, isLast, color, out);
     }
 }
 
 static void doTree(const fs::path& start, int maxDepth) {
-    std::error_code ec;
-    if (!fs::exists(start, ec)) {
-        log("ENOENT: no such file or directory, stat '" + start.string() + "'");
-        return;
-    }
-    walkTree(start, 0, maxDepth, "", true, std::cout);
+    if (!requirePath(start)) return;
+    walkTree(start, 0, maxDepth, "", true, supportsAnsiColor(), std::cout);
 }
 
 // ---------------------------------------------------------------------------
 // -o : text-mode directory listing (portable substitute for "open explorer")
 // ---------------------------------------------------------------------------
 static void doOpen(const fs::path& p) {
+    if (!requirePath(p)) return;
     std::error_code ec;
-    if (!fs::exists(p, ec)) {
-        log("ENOENT: no such file or directory, stat '" + p.string() + "'");
-        return;
-    }
     if (!fs::is_directory(p, ec)) {
         // For a file, behave like a tiny `cat` preview header
         std::cout << "--- " << p.string() << " ---\n";
@@ -675,19 +716,14 @@ static std::optional<std::string> readYouConfigValue(const std::string& name) {
             std::ifstream in(cfg);
             std::string line;
             while (std::getline(in, line)) {
-                // strip leading whitespace
-                size_t s = 0;
-                while (s < line.size() && std::isspace(static_cast<unsigned char>(line[s]))) ++s;
-                if (s >= line.size() || line[s] == '#') continue;
-                if (line.compare(s, name.size(), name) != 0) continue;
-                size_t p = s + name.size();
-                while (p < line.size() && std::isspace(static_cast<unsigned char>(line[p]))) ++p;
-                if (p >= line.size() || line[p] != ':') continue;
-                ++p;
-                while (p < line.size() && std::isspace(static_cast<unsigned char>(line[p]))) ++p;
-                size_t e = line.size();
-                while (e > p && std::isspace(static_cast<unsigned char>(line[e - 1]))) --e;
-                if (e > p) return line.substr(p, e - p);
+                std::string t = trim(line);
+                if (t.empty() || t[0] == '#') continue;
+                if (t.compare(0, name.size(), name) != 0) continue;
+                size_t p = name.size();
+                while (p < t.size() && std::isspace(static_cast<unsigned char>(t[p]))) ++p;
+                if (p >= t.size() || t[p] != ':') continue;
+                std::string value = trim(t.substr(p + 1));
+                if (!value.empty()) return value;
             }
         }
         if (dir == dir.root_path()) break;
@@ -724,22 +760,31 @@ static std::string resolveDollarPrefix(const std::string& arg) {
 // binary. The defaults are taken from an existing setting.json if present.
 // ---------------------------------------------------------------------------
 static fs::path settingJsonPath() {
-    // Look next to the executable first, fall back to cwd.
+    // Unlike the package.json lookup used for -v, settings are read from and
+    // written to the current working directory.
     return fs::current_path() / "setting.json";
 }
 
 static std::string readLineTrimmed() {
     std::string s;
     std::getline(std::cin, s);
-    while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' ')) s.pop_back();
-    size_t a = 0;
-    while (a < s.size() && std::isspace(static_cast<unsigned char>(s[a]))) ++a;
-    return s.substr(a);
+    return trim(s);
 }
 
 static std::string settingDefault(const std::string& existing, const std::string& key, const std::string& fallback) {
     std::string v = extractJsonStringField(existing, key);
     return v.empty() ? fallback : v;
+}
+
+// Prompt for one setting; Enter keeps the current (or default) value. `label`
+// is left-justified to a fixed width so the brackets line up.
+static std::string promptSetting(const std::string& existing, const std::string& key,
+                                 const std::string& fallback, const std::string& label) {
+    std::string current = settingDefault(existing, key, fallback);
+    std::cout << "  " << std::left << std::setw(22) << label
+              << "[" << current << "]: " << std::flush;
+    std::string value = readLineTrimmed();
+    return value.empty() ? current : value;
 }
 
 static void doSetting() {
@@ -751,18 +796,10 @@ static void doSetting() {
         existing = ss.str();
     }
     std::cout << "Configure You (press Enter to accept defaults)\n";
-    std::cout << "  default editor        [" << settingDefault(existing, "editor", "nano") << "]: " << std::flush;
-    std::string editor = readLineTrimmed();
-    if (editor.empty()) editor = settingDefault(existing, "editor", "nano");
-    std::cout << "  trash path            [" << settingDefault(existing, "trash", ".trash") << "]: " << std::flush;
-    std::string trash = readLineTrimmed();
-    if (trash.empty()) trash = settingDefault(existing, "trash", ".trash");
-    std::cout << "  tree depth            [" << settingDefault(existing, "tree_depth", "3") << "]: " << std::flush;
-    std::string depth = readLineTrimmed();
-    if (depth.empty()) depth = settingDefault(existing, "tree_depth", "3");
-    std::cout << "  confirm on create?    [" << settingDefault(existing, "confirm_create", "n") << "]: " << std::flush;
-    std::string confirm = readLineTrimmed();
-    if (confirm.empty()) confirm = settingDefault(existing, "confirm_create", "n");
+    std::string editor  = promptSetting(existing, "editor", "nano", "default editor");
+    std::string trash   = promptSetting(existing, "trash", ".trash", "trash path");
+    std::string depth   = promptSetting(existing, "tree_depth", "3", "tree depth");
+    std::string confirm = promptSetting(existing, "confirm_create", "n", "confirm on create?");
 
     std::ofstream out(path, std::ios::trunc | std::ios::binary);
     if (!out) { log("cannot write " + path.string()); return; }
@@ -783,13 +820,18 @@ static void doSetting() {
 static void createOne(const fs::path& abs, PathKind kind) {
     std::error_code ec;
     fs::path parent = abs.parent_path();
-    if (!parent.empty()) fs::create_directories(parent, ec);
+    if (!parent.empty()) {
+        fs::create_directories(parent, ec);
+        if (ec) { log(ec.message()); return; }
+    }
     if (kind == PathKind::Directory) {
         fs::create_directories(abs, ec);
+        if (ec) log(ec.message());
         return;
     }
     if (!fs::exists(abs, ec)) {
         std::ofstream ofs(abs, std::ios::trunc | std::ios::binary);
+        if (!ofs) log("could not create file '" + abs.string() + "'");
     } else {
         touchFile(abs);
     }
@@ -798,41 +840,41 @@ static void createOne(const fs::path& abs, PathKind kind) {
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
-int main(int argc, char* argv[]) {
-    std::vector<std::string> args(argv + 1, argv + argc);
 
+// Single-shot flags (version / help / -pwd / --setting / -t): as soon as any
+// argument matches, the whole invocation is handled and the call returns true.
+static bool handleSingleShot(const std::vector<std::string>& args) {
     static const std::vector<std::string> versionFlags = {"-v", "--v", "--version"};
     static const std::vector<std::string> helpFlags = {"-h", "--h", "--help"};
-    auto contains = [](const std::vector<std::string>& v, const std::string& s) {
+    auto has = [](const std::vector<std::string>& v, const std::string& s) {
         return std::find(v.begin(), v.end(), s) != v.end();
     };
-
-    // Single-shot top-level flags first.
     for (size_t i = 0; i < args.size(); ++i) {
-        if (contains(versionFlags, args[i])) {
+        const std::string& a = args[i];
+        if (has(versionFlags, a)) {
             std::cout << "You/" << getVersion() << " C++: " << cppStandardString() << "\n";
-            return 0;
+            return true;
         }
-        if (contains(helpFlags, args[i])) {
+        if (has(helpFlags, a)) {
             std::cout << DefaultLog;
-            return 0;
+            return true;
         }
-        if (args[i] == "-pwd") {
+        if (a == "-pwd") {
             std::error_code ec;
             std::cout << fs::current_path(ec).string() << "\n";
-            return 0;
+            return true;
         }
-        if (args[i] == "--setting" || args[i] == "-setting") {
+        if (a == "--setting" || a == "-setting") {
             doSetting();
-            return 0;
+            return true;
         }
-        if (args[i] == "-t" || args[i].rfind("-t=", 0) == 0) {
+        if (a == "-t" || a.rfind("-t=", 0) == 0) {
             int depth = 3;
-            if (args[i] == "-t=") {
+            if (a == "-t=") {
                 // `-t=` with no number => walk as deep as it goes.
                 depth = kTreeInfiniteDepth;
-            } else if (args[i].rfind("-t=", 0) == 0) {
-                try { depth = std::stoi(args[i].substr(3)); } catch (...) { depth = 3; }
+            } else if (a.rfind("-t=", 0) == 0) {
+                try { depth = std::stoi(a.substr(3)); } catch (...) { depth = 3; }
             } else if (i + 1 < args.size()) {
                 try { depth = std::stoi(args[i + 1]); } catch (...) { depth = 3; }
             }
@@ -841,57 +883,68 @@ int main(int argc, char* argv[]) {
                 start = args[i - 1];
             }
             doTree(start, depth);
-            return 0;
+            return true;
         }
     }
+    return false;
+}
 
-    // `you run:Folder="..."` -- one-shot, takes a single argument.
-    for (size_t i = 0; i < args.size(); ++i) {
-        if (args[i].rfind("run:", 0) == 0) {
-            const std::string& full = args[i];
-            auto eq = full.find('=');
-            std::string head = (eq == std::string::npos) ? full : full.substr(0, eq);
-            std::string cmd  = (eq == std::string::npos) ? std::string() : full.substr(eq + 1);
-            // head is "run:Folder" -- strip prefix
-            std::string folder = (head.size() > 4) ? head.substr(4) : std::string();
-            if (!folder.empty()) {
-                std::error_code ec;
-                fs::create_directories(folder, ec);
-                if (ec) { log(ec.message()); return 1; }
-                fs::current_path(folder, ec);
-                if (ec) { log(ec.message()); return 1; }
+// `you run:Folder="cmd1 &&& cmd2"` -- chdir into the folder (creating it if
+// needed) and run each `&&&`-separated command via the system shell.
+static int runCommands(const std::string& full) {
+    auto eq = full.find('=');
+    std::string head = (eq == std::string::npos) ? full : full.substr(0, eq);
+    std::string cmd  = (eq == std::string::npos) ? std::string() : full.substr(eq + 1);
+    // head is "run:Folder" -- strip prefix
+    std::string folder = (head.size() > 4) ? head.substr(4) : std::string();
+    if (!folder.empty()) {
+        std::error_code ec;
+        fs::create_directories(folder, ec);
+        if (ec) { log(ec.message()); return 1; }
+        fs::current_path(folder, ec);
+        if (ec) { log(ec.message()); return 1; }
+    }
+    // strip outer quotes if present
+    if (cmd.size() >= 2 && (cmd.front() == '"' || cmd.front() == '\'')) cmd = cmd.substr(1);
+    if (!cmd.empty() && (cmd.back() == '"' || cmd.back() == '\'')) cmd.pop_back();
+    // split on "&&&" and run each command
+    std::string token;
+    int rc = 0;
+    for (size_t j = 0; j <= cmd.size(); ++j) {
+        if (j == cmd.size() || (j + 2 < cmd.size() && cmd[j] == '&' && cmd[j + 1] == '&' && cmd[j + 2] == '&')) {
+            if (!token.empty()) {
+                std::cout << "$ " << token << "\n";
+                int r = std::system(token.c_str());
+                if (r != 0) rc = r;
             }
-            // strip outer quotes if present
-            if (cmd.size() >= 2 && (cmd.front() == '"' || cmd.front() == '\'')) cmd = cmd.substr(1);
-            if (!cmd.empty() && (cmd.back() == '"' || cmd.back() == '\'')) cmd.pop_back();
-            // split on "&&&" and run each command
-            std::string token;
-            int rc = 0;
-            for (size_t j = 0; j <= cmd.size(); ++j) {
-                if (j == cmd.size() || (j + 2 < cmd.size() && cmd[j] == '&' && cmd[j + 1] == '&' && cmd[j + 2] == '&')) {
-                    if (!token.empty()) {
-                        std::cout << "$ " << token << "\n";
-                        int r = std::system(token.c_str());
-                        if (r != 0) rc = r;
-                    }
-                    token.clear();
-                    if (j + 2 < cmd.size()) j += 2;
-                } else {
-                    token += cmd[j];
-                }
-            }
-            return rc;
+            token.clear();
+            if (j + 2 < cmd.size()) j += 2;
+        } else {
+            token += cmd[j];
         }
     }
+    return rc;
+}
 
-    // Per-argument processing with cd: chaining, brace expansion, and
-    // trailing-slash / hidden-file kind resolution.
-    fs::path currentRoot = fs::current_path();
+// Per-argument flags that operate on the preceding path argument.
+// Returns false if `flag` is not one of the known per-argument flags.
+static bool handleDashFlag(const std::string& flag, const std::string& prevArg,
+                           const fs::path& root) {
+    fs::path target = (root / prevArg).lexically_normal();
+    if (flag == "-d")     { deletePath(target); return true; }
+    if (flag == "-rf")    { deleteKind(target, PathKind::File); return true; }
+    if (flag == "-rd")    { deleteKind(target, PathKind::Directory); return true; }
+    if (flag == "-trash") { doTrash(target); return true; }
+    if (flag == "-i")     { printInfo(target); return true; }
+    if (flag == "-o")     { doOpen(target); return true; }
+    return false;
+}
 
-    // First pass: collect pairs for the multi-arg flags `-rn` / `-mv` / `-c`,
-    // which the spec writes as `-rn old=new`. We scan once, build a tiny
-    // mapping from index -> "old=new", and remove those args from the list
-    // before the per-argument loop.
+// Collect and run the `-rn old=new` / `-mv old=new` / `-c old=new` operations
+// (which describe their own target paths), then mark the involved argument
+// indices as consumed so the per-argument loop skips them.
+static void runOps(const std::vector<std::string>& args, const fs::path& currentRoot,
+                   std::vector<bool>& consumed) {
     struct PendingOp { size_t flagIndex; std::string spec; };
     std::vector<PendingOp> ops;
     for (size_t i = 0; i < args.size(); ++i) {
@@ -904,7 +957,6 @@ int main(int argc, char* argv[]) {
             ops.push_back({i, args[i + 1]});
         }
     }
-    // Execute ops first (they describe their own target paths).
     for (const auto& op : ops) {
         std::string lhs, rhs;
         if (!splitEq(op.spec, lhs, rhs)) continue;
@@ -914,9 +966,29 @@ int main(int argc, char* argv[]) {
         else if (args[op.flagIndex] == "-mv") doMove(oldP, newP);
         else doCopy(oldP, newP);
     }
+    for (const auto& op : ops) {
+        consumed[op.flagIndex] = true;
+        consumed[op.flagIndex + 1] = true;
+    }
+}
+
+int main(int argc, char* argv[]) {
+    std::vector<std::string> args(argv + 1, argv + argc);
+
+    if (handleSingleShot(args)) return 0;
+
+    for (const auto& a : args) {
+        if (a.rfind("run:", 0) == 0) return runCommands(a);
+    }
 
     // Per-argument processing with cd: chaining, brace expansion, and
     // trailing-slash / hidden-file kind resolution.
+    fs::path currentRoot = fs::current_path();
+
+    // Collect/run -rn/-mv/-c ops and mark their indices as consumed.
+    std::vector<bool> consumed(args.size(), false);
+    runOps(args, currentRoot, consumed);
+
     auto processName = [&](const std::string& filename) {
         // .youconfig / $(name) substitution
         std::string resolved = resolveDollarPrefix(filename);
@@ -930,23 +1002,12 @@ int main(int argc, char* argv[]) {
         }
 
         fs::path filePath = (currentRoot / cleanName).lexically_normal();
-        fs::path directory = filePath.parent_path();
         std::string baseName = filePath.filename().string();
-        bool isFile = !nodeExtname(baseName).empty();
         bool hiddenFile = !baseName.empty() && baseName[0] == '.';
         PathKind kind = resolveKind(baseName, dirMarker, hiddenFile);
 
-        std::error_code ec;
-        if (!fs::exists(directory, ec)) {
-            fs::create_directories(directory, ec);
-        }
         createOne(filePath, kind);
-        (void)isFile; (void)hiddenFile; // kind already captured
     };
-
-    // Build the set of indices consumed by -rn/-mv/-c so we skip them.
-    std::vector<bool> consumed(args.size(), false);
-    for (const auto& op : ops) { consumed[op.flagIndex] = true; consumed[op.flagIndex + 1] = true; }
 
     for (size_t index = 0; index < args.size(); ++index) {
         if (consumed[index]) continue;
@@ -955,34 +1016,7 @@ int main(int argc, char* argv[]) {
 
         if (isDash) {
             // -d, -rf, -rd, -trash, -i, -o all operate on the previous arg.
-            if (filename == "-d" && index > 0) {
-                deletePath((currentRoot / args[index - 1]).lexically_normal());
-                continue;
-            }
-            if (filename == "-rf" && index > 0) {
-                deleteKind((currentRoot / args[index - 1]).lexically_normal(), PathKind::File);
-                continue;
-            }
-            if (filename == "-rd" && index > 0) {
-                deleteKind((currentRoot / args[index - 1]).lexically_normal(), PathKind::Directory);
-                continue;
-            }
-            if (filename == "-trash" && index > 0) {
-                doTrash((currentRoot / args[index - 1]).lexically_normal());
-                continue;
-            }
-            if (filename == "-i" && index > 0) {
-                printInfo((currentRoot / args[index - 1]).lexically_normal());
-                continue;
-            }
-            if (filename == "-o" && index > 0) {
-                doOpen((currentRoot / args[index - 1]).lexically_normal());
-                continue;
-            }
-            if (filename == "-t" || filename.rfind("-t=", 0) == 0) {
-                // -t handling already done in the top-level loop; ignore here.
-                continue;
-            }
+            if (index > 0 && handleDashFlag(filename, args[index - 1], currentRoot)) continue;
             // Unknown flag -- preserve original behaviour: print help.
             std::cout << "Pardon! The command does not exist..\n\n" << DefaultLog;
             return 0;
@@ -1006,3 +1040,4 @@ int main(int argc, char* argv[]) {
     }
     return 0;
 }
+
