@@ -64,7 +64,7 @@ Flags:
   -trash target                  Move target to ./.trash/<timestamp>/
   -i                             Show info for a file or directory
   -o target                      Show a text listing of a directory
-  -t[=N]                         Tree view of cwd (default depth 3)
+  -t[=N]                         Tree view of cwd (default depth 3; -t= = infinite)
   -pwd                           Print current working directory
   --setting                      Interactive prompts; writes setting.json
 
@@ -588,9 +588,12 @@ static bool shouldSkip(const std::string& name) {
     return name == "node_modules" || name == ".git";
 }
 
+// Sentinel value for "unlimited depth" (e.g. `-t=`).
+static constexpr int kTreeInfiniteDepth = -1;
+
 static void walkTree(const fs::path& root, int depth, int maxDepth,
                      const std::string& prefix, bool last, std::ostream& out) {
-    if (depth > maxDepth) return;
+    if (maxDepth != kTreeInfiniteDepth && depth > maxDepth) return;
     std::error_code ec;
     if (depth == 0) {
         out << root.filename().string() << "\n";
@@ -599,7 +602,7 @@ static void walkTree(const fs::path& root, int depth, int maxDepth,
             << root.filename().string() << "\n";
     }
 
-    if (depth == maxDepth) return;
+    if (maxDepth != kTreeInfiniteDepth && depth == maxDepth) return;
     std::vector<fs::directory_entry> entries;
     for (auto it = fs::directory_iterator(root, ec);
          it != fs::directory_iterator(); it.increment(ec)) {
@@ -825,7 +828,10 @@ int main(int argc, char* argv[]) {
         }
         if (args[i] == "-t" || args[i].rfind("-t=", 0) == 0) {
             int depth = 3;
-            if (args[i].rfind("-t=", 0) == 0) {
+            if (args[i] == "-t=") {
+                // `-t=` with no number => walk as deep as it goes.
+                depth = kTreeInfiniteDepth;
+            } else if (args[i].rfind("-t=", 0) == 0) {
                 try { depth = std::stoi(args[i].substr(3)); } catch (...) { depth = 3; }
             } else if (i + 1 < args.size()) {
                 try { depth = std::stoi(args[i + 1]); } catch (...) { depth = 3; }
