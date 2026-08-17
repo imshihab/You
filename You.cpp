@@ -66,7 +66,8 @@ Flags:
   -trash target                  Move target to ./.trash/<timestamp>/
   -i                             Show info for a file or directory
   -o target                      Show a text listing of a directory
-  -t[=N]                         Tree view of cwd (default depth 3; -t= = infinite)
+  -t[=N]                         Tree view of cwd (default depth 3; -t= = infinite).
+                                  Nerd Font icons + colored dirs on a TTY.
   -pwd                           Print current working directory
   --setting                      Interactive prompts; writes setting.json
 
@@ -237,6 +238,152 @@ static std::optional<std::string> mimeGetType(const std::string& extNoDot) {
     auto it = table.find(lower);
     if (it == table.end()) return std::nullopt;
     return it->second;
+}
+
+// ---------------------------------------------------------------------------
+// Nerd Font icons for the tree view (-t). Glyphs are Unicode private-use
+// codepoints in the E000-F8FF range, which a Nerd Font (e.g. JetBrainsMono
+// Nerd Font) renders as colored icons instead of tofu boxes. Keys are
+// lowercased extensions without the leading dot. The icon is emitted as raw
+// UTF-8 in a narrow string literal; the compiler encodes \uXXXX escapes as
+// UTF-8 in .rodata. Icons are only prepended when stdout is a TTY that
+// supports ANSI escapes (see supportsAnsiColor() / walkTree()).
+// ---------------------------------------------------------------------------
+static const std::unordered_map<std::string, std::string>& iconTable() {
+    static const std::unordered_map<std::string, std::string> table = {
+        // languages
+        {"js",    "\uE74E"}, //  js
+        {"mjs",   "\uE74E"},
+        {"cjs",   "\uE74E"},
+        {"jsx",   "\uE7BA"},
+        {"ts",    "\uE628"}, //  ts (also serves .tsx)
+        {"tsx",   "\uE628"},
+        {"py",    "\uE73C"}, //  python
+        {"html",  "\uE736"}, //  html
+        {"htm",   "\uE736"},
+        {"css",   "\uE749"}, //  css
+        {"scss",  "\uE749"},
+        {"sass",  "\uE749"},
+        {"less",  "\uE749"},
+        {"json",  "\uE60B"}, //  json
+        {"md",    "\uE609"}, //  markdown
+        {"mdx",   "\uE609"},
+        {"yml",   "\uE6A8"}, //  yaml
+        {"yaml",  "\uE6A8"},
+        {"go",    "\uE626"}, //  go
+        {"rs",    "\uE7A8"}, //  rust
+        {"c",     "\uE61E"}, //  C
+        {"h",     "\uE61E"},
+        {"cpp",   "\uE61D"}, //  C++
+        {"cc",    "\uE61D"},
+        {"cxx",   "\uE61D"},
+        {"hpp",   "\uE61D"},
+        {"hh",    "\uE61D"},
+        {"java",  "\uE738"}, //  java
+        {"rb",    "\uE739"}, //  ruby
+        {"php",   "\uE73D"}, //  php
+        {"sh",    "\uF489"}, //  shell
+        {"bash",  "\uF489"},
+        {"zsh",   "\uF489"},
+        {"toml",  "\uE6B2"}, //  toml
+        {"sql",   "\uE706"}, //  database
+        // images / media
+        {"png",   "\uF1C5"}, //  image
+        {"jpg",   "\uF1C5"},
+        {"jpeg",  "\uF1C5"},
+        {"gif",   "\uF1C5"},
+        {"webp",  "\uF1C5"},
+        {"svg",   "\uF1C5"},
+        {"ico",   "\uF1C5"},
+        {"bmp",   "\uF1C5"},
+        {"tiff",  "\uF1C5"},
+        {"mp3",   "\uF001"}, //  audio
+        {"wav",   "\uF001"},
+        {"ogg",   "\uF001"},
+        {"flac",  "\uF001"},
+        {"m4a",   "\uF001"},
+        {"mp4",   "\uF03D"}, //  video
+        {"mkv",   "\uF03D"},
+        {"mov",   "\uF03D"},
+        {"avi",   "\uF03D"},
+        {"webm",  "\uF03D"},
+        {"wmv",   "\uF03D"},
+        // docs / archives / misc
+        {"pdf",   "\uF1C1"}, //  pdf
+        {"doc",   "\uF1C2"},
+        {"docx",  "\uF1C2"},
+        {"xls",   "\uF1C3"},
+        {"xlsx",  "\uF1C3"},
+        {"ppt",   "\uF1C4"},
+        {"pptx",  "\uF1C4"},
+        {"zip",   "\uF187"}, //  archive
+        {"tar",   "\uF187"},
+        {"gz",    "\uF187"},
+        {"bz2",   "\uF187"},
+        {"xz",    "\uF187"},
+        {"7z",    "\uF187"},
+        {"rar",   "\uF187"},
+        {"lock",  "\uF023"}, //  lock
+        {"log",   "\uF4D8"}, //  log
+        {"wasm",  "\uE6A1"}, //  wasm
+    };
+    return table;
+}
+
+// Exact-filename matches (case-insensitive). These are matched on the
+// basename, not the extension, because Node's path.extname() returns "" for
+// pure dot-files like .gitignore, so they need an explicit lookup.
+static std::optional<std::string> iconForExactName(const std::string& baseName) {
+    static const std::unordered_map<std::string, std::string> names = {
+        {"dockerfile",   "\uF308"}, //  docker
+        {"containerfile","\uF308"},
+        {"makefile",     "\uE779"}, //  gnu makefile
+        {"rakefile",     "\uE779"},
+        {"license",      "\uF02D"}, //  license
+        {"licence",      "\uF02D"},
+        {"copying",      "\uF02D"},
+        // dotfiles
+        {".gitignore",    "\uF1D3"}, //  git
+        {".gitattributes","\uF1D3"},
+        {".gitmodules",   "\uF1D3"},
+        {".gitkeep",      "\uF1D3"},
+        {".env",          "\uF462"}, //  env
+        {".envrc",        "\uF462"},
+        {".dockerignore", "\uF308"},
+        {".editorconfig", "\uE615"}, //  config
+        {".npmrc",        "\uE71E"}, //  npm
+        {".nvmrc",        "\uE71E"},
+        {".prettierrc",   "\uE60B"}, //  json-ish
+        {".eslintrc",     "\uE60B"},
+        {".babelrc",      "\uE60B"},
+    };
+    std::string lower = baseName;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+        [](unsigned char c) { return std::tolower(c); });
+    auto it = names.find(lower);
+    if (it != names.end()) return it->second;
+    // README, README.md, README.txt, etc. -- any extension.
+    if (lower.rfind("readme", 0) == 0) return std::string("\uF7FB"); //  book
+    return std::nullopt;
+}
+
+// Pick the icon for a tree entry. Directories always get the folder glyph;
+// files go through the exact-name table first, then the extension table, and
+// finally fall back to the generic file glyph so the tree is never blank.
+static std::string iconForName(const std::string& baseName, bool isDir) {
+    if (isDir) return "\uF07B"; //  folder (closed)
+    auto exact = iconForExactName(baseName);
+    if (exact.has_value()) return *exact;
+    std::string extWithDot = nodeExtname(baseName);
+    if (!extWithDot.empty()) {
+        std::string ext = extWithDot.substr(1);
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+            [](unsigned char c) { return std::tolower(c); });
+        const auto& table = iconTable();
+        auto it = table.find(ext);
+        if (it != table.end()) return it->second;
+    }
+    return "\uF15B"; //  generic file
 }
 
 // ---------------------------------------------------------------------------
@@ -589,7 +736,13 @@ static void doTrash(const fs::path& p) {
 }
 
 // ---------------------------------------------------------------------------
-// -t : tree view (recursive, depth-limited, skips node_modules and .git)
+// -t : tree view (recursive, depth-limited, skips node_modules and .git).
+//
+// When stdout is a TTY that supports ANSI escapes, every entry is preceded
+// by a Nerd Font glyph (folder, file-by-extension, .gitignore, Dockerfile,
+// LICENSE, README*, ...). Output piped to a file or another command falls
+// back to plain ASCII because supportsAnsiColor() returns false in that
+// case -- same gate that controls the bold-blue directory color.
 // ---------------------------------------------------------------------------
 static bool shouldSkip(const std::string& name) {
     return name == "node_modules" || name == ".git";
@@ -642,12 +795,28 @@ static void walkTree(const fs::path& root, int depth, int maxDepth,
     std::error_code ec;
     // Append a trailing "/" to directory names so folders stand out from files.
     bool isDir = fs::is_directory(root, ec);
-    std::string name = colorName(root.filename().string() + (isDir ? "/" : ""), isDir, color);
+    std::string baseName = root.filename().string();
+    std::string labeled = colorName(baseName + (isDir ? "/" : ""), isDir, color);
+    // Prepend a Nerd Font glyph when the stream can render them. Icons are
+    // gated on the same TTY/NO_COLOR check as the color escapes so piping
+    // the tree into another tool yields plain text.
+    if (color) {
+        std::string icon = iconForName(baseName, isDir);
+        // Same bold blue around the icon as the directory name so directories
+        // stay visually cohesive; files get the uncolored glyph.
+        if (isDir) {
+            // `labeled` already carries its own ANSI wrap; only add the color
+            // around the icon and rely on the existing reset at end of name.
+            labeled = std::string(kAnsiDir) + icon + kAnsiReset + "  " + labeled;
+        } else {
+            labeled = icon + "  " + labeled;
+        }
+    }
     if (depth == 0) {
-        out << name << "\n";
+        out << labeled << "\n";
     } else {
         out << prefix << (last ? "\u2514\u2500\u2500 " : "\u251c\u2500\u2500 ")
-            << name << "\n";
+            << labeled << "\n";
     }
 
     if (maxDepth != kTreeInfiniteDepth && depth == maxDepth) return;

@@ -30,8 +30,10 @@ nothing to do with the npm package of the same name.
   and writes a `meta.json` sidecar with the original absolute path so it
   can be restored later
 - **Tree view** with `-t[=N]` (default depth 3, skips `node_modules` and
-  `.git`; directories are shown with a trailing `/`, colored bold blue when
-  stdout is a TTY — set `NO_COLOR` to disable colors)
+  `.git`; each entry is preceded by a Nerd Font icon (folder, language, image,
+  archive, etc.), directories are colored bold blue and get the folder glyph
+  in the same color. Both icons and colors are gated on stdout being a TTY —
+  set `NO_COLOR` or pipe the output to disable them.)
 - **Print working directory** with `-pwd`
 - **Open / list** with `-o` — for a directory, prints a text listing; for a
   file, dumps its contents (portable substitute for "open in file explorer")
@@ -106,7 +108,7 @@ you [fileName / directoryName] [flag]
 | `-rd`               | Delete a directory (errors on file) |
 | `-i`                | Get information about a file or directory |
 | `-o target`         | Show a text listing of a directory (or dump a file) |
-| `-t[=N]`            | Tree view of the cwd (default depth 3); skips `node_modules` and `.git`; directories get a trailing `/`, colored bold blue on a TTY (`NO_COLOR` disables) |
+| `-t[=N]`            | Tree view of the cwd (default depth 3); skips `node_modules` and `.git`; directories get a trailing `/`, colored bold blue on a TTY. Each entry is preceded by a Nerd Font icon (folder, language, image, archive, ...). `NO_COLOR` or a non-TTY stdout disables both icons and color. |
 | `-pwd`              | Print the absolute current working directory |
 | `--setting`         | Interactive prompts that write `setting.json` |
 | `-rn old=new`       | Rename a file or directory           |
