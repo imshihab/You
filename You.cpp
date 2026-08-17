@@ -241,139 +241,159 @@ static std::optional<std::string> mimeGetType(const std::string& extNoDot) {
 }
 
 // ---------------------------------------------------------------------------
-// Nerd Font icons for the tree view (-t). Glyphs are Unicode private-use
-// codepoints in the E000-F8FF range, which a Nerd Font (e.g. JetBrainsMono
-// Nerd Font) renders as colored icons instead of tofu boxes. Keys are
-// lowercased extensions without the leading dot. The icon is emitted as raw
-// UTF-8 in a narrow string literal; the compiler encodes \uXXXX escapes as
-// UTF-8 in .rodata. Icons are only prepended when stdout is a TTY that
-// supports ANSI escapes (see supportsAnsiColor() / walkTree()).
+// Colors for the tree view
 // ---------------------------------------------------------------------------
-static const std::unordered_map<std::string, std::string>& iconTable() {
-    static const std::unordered_map<std::string, std::string> table = {
+static constexpr const char* kAnsiReset     = "\033[0m";
+static constexpr const char* kAnsiFg        = "\033[38;2;248;250;252m";
+static constexpr const char* kAnsiYellow    = "\033[38;2;250;204;21m";
+static constexpr const char* kAnsiBlue      = "\033[38;2;37;99;235m";
+static constexpr const char* kAnsiGreen     = "\033[38;2;34;197;94m";
+static constexpr const char* kAnsiRed       = "\033[38;2;220;38;38m";
+static constexpr const char* kAnsiDarkBlue  = "\033[38;2;29;78;216m";
+static constexpr const char* kAnsiDarkGreen = "\033[38;2;21;128;61m";
+static constexpr const char* kAnsiDarkRed   = "\033[38;2;153;27;27m";
+static constexpr const char* kAnsiGray      = "\033[38;2;55;65;81m";
+static constexpr const char* kAnsiPurple    = "\033[38;2;147;51;234m";
+static constexpr const char* kAnsiBg        = "\033[48;2;17;24;39m";
+
+struct IconInfo {
+    const char* icon;
+    const char* color;
+};
+
+// ---------------------------------------------------------------------------
+// Nerd Font icons for the tree view (-t).
+// ---------------------------------------------------------------------------
+static const std::unordered_map<std::string, IconInfo>& iconTable() {
+    static const std::unordered_map<std::string, IconInfo> table = {
         // languages
-        {"js",    "\uE74E"}, //  js
-        {"mjs",   "\uE74E"},
-        {"cjs",   "\uE74E"},
-        {"jsx",   "\uE7BA"},
-        {"ts",    "\uE628"}, //  ts (also serves .tsx)
-        {"tsx",   "\uE628"},
-        {"py",    "\uE73C"}, //  python
-        {"html",  "\uE736"}, //  html
-        {"htm",   "\uE736"},
-        {"css",   "\uE749"}, //  css
-        {"scss",  "\uE749"},
-        {"sass",  "\uE749"},
-        {"less",  "\uE749"},
-        {"json",  "\uE60B"}, //  json
-        {"md",    "\uE609"}, //  markdown
-        {"mdx",   "\uE609"},
-        {"yml",   "\uE6A8"}, //  yaml
-        {"yaml",  "\uE6A8"},
-        {"go",    "\uE626"}, //  go
-        {"rs",    "\uE7A8"}, //  rust
-        {"c",     "\uE61E"}, //  C
-        {"h",     "\uE61E"},
-        {"cpp",   "\uE61D"}, //  C++
-        {"cc",    "\uE61D"},
-        {"cxx",   "\uE61D"},
-        {"hpp",   "\uE61D"},
-        {"hh",    "\uE61D"},
-        {"java",  "\uE738"}, //  java
-        {"rb",    "\uE739"}, //  ruby
-        {"php",   "\uE73D"}, //  php
-        {"sh",    "\uF489"}, //  shell
-        {"bash",  "\uF489"},
-        {"zsh",   "\uF489"},
-        {"toml",  "\uE6B2"}, //  toml
-        {"sql",   "\uE706"}, //  database
+        {"js",    {"\uE74E", kAnsiYellow}},
+        {"mjs",   {"\uE74E", kAnsiYellow}},
+        {"cjs",   {"\uE74E", kAnsiYellow}},
+        {"jsx",   {"\uE7BA", kAnsiBlue}},
+        {"ts",    {"\uE628", kAnsiBlue}},
+        {"tsx",   {"\uE628", kAnsiBlue}},
+        {"py",    {"\uE73C", kAnsiBlue}},
+        {"html",  {"\uE736", kAnsiRed}},
+        {"htm",   {"\uE736", kAnsiRed}},
+        {"css",   {"\uE749", kAnsiBlue}},
+        {"scss",  {"\uE749", kAnsiPurple}},
+        {"sass",  {"\uE749", kAnsiPurple}},
+        {"less",  {"\uE749", kAnsiDarkBlue}},
+        {"json",  {"\uE60B", kAnsiGreen}},
+        {"md",    {"\uE609", kAnsiFg}},
+        {"mdx",   {"\uE609", kAnsiYellow}},
+        {"yml",   {"\uE6A8", kAnsiRed}},
+        {"yaml",  {"\uE6A8", kAnsiRed}},
+        {"go",    {"\uE626", kAnsiBlue}},
+        {"rs",    {"\uE7A8", kAnsiRed}},
+        {"c",     {"\uE61E", kAnsiBlue}},
+        {"h",     {"\uE61A", kAnsiPurple}},
+        {"cpp",   {"\uE61D", kAnsiBlue}},
+        {"cc",    {"\uE61D", kAnsiBlue}},
+        {"cxx",   {"\uE61D", kAnsiBlue}},
+        {"hpp",   {"\uE61A", kAnsiPurple}},
+        {"hh",    {"\uE61A", kAnsiPurple}},
+        {"java",  {"\uE738", kAnsiRed}},
+        {"rb",    {"\uE739", kAnsiRed}},
+        {"php",   {"\uE73D", kAnsiPurple}},
+        {"sh",    {"\uF489", kAnsiGreen}},
+        {"bash",  {"\uF489", kAnsiGreen}},
+        {"zsh",   {"\uF489", kAnsiGreen}},
+        {"toml",  {"\uE6B2", kAnsiYellow}},
+        {"sql",   {"\uE706", kAnsiYellow}},
         // images / media
-        {"png",   "\uF1C5"}, //  image
-        {"jpg",   "\uF1C5"},
-        {"jpeg",  "\uF1C5"},
-        {"gif",   "\uF1C5"},
-        {"webp",  "\uF1C5"},
-        {"svg",   "\uF1C5"},
-        {"ico",   "\uF1C5"},
-        {"bmp",   "\uF1C5"},
-        {"tiff",  "\uF1C5"},
-        {"mp3",   "\uF001"}, //  audio
-        {"wav",   "\uF001"},
-        {"ogg",   "\uF001"},
-        {"flac",  "\uF001"},
-        {"m4a",   "\uF001"},
-        {"mp4",   "\uF03D"}, //  video
-        {"mkv",   "\uF03D"},
-        {"mov",   "\uF03D"},
-        {"avi",   "\uF03D"},
-        {"webm",  "\uF03D"},
-        {"wmv",   "\uF03D"},
+        {"png",   {"\uF1C5", kAnsiPurple}},
+        {"jpg",   {"\uF1C5", kAnsiPurple}},
+        {"jpeg",  {"\uF1C5", kAnsiPurple}},
+        {"gif",   {"\uF1C5", kAnsiPurple}},
+        {"webp",  {"\uF1C5", kAnsiPurple}},
+        {"svg",   {"\uF1C5", kAnsiYellow}},
+        {"ico",   {"\uF1C5", kAnsiYellow}},
+        {"bmp",   {"\uF1C5", kAnsiPurple}},
+        {"tiff",  {"\uF1C5", kAnsiPurple}},
+        {"mp3",   {"\uF001", kAnsiYellow}},
+        {"wav",   {"\uF001", kAnsiYellow}},
+        {"ogg",   {"\uF001", kAnsiYellow}},
+        {"flac",  {"\uF001", kAnsiYellow}},
+        {"m4a",   {"\uF001", kAnsiYellow}},
+        {"mp4",   {"\uF03D", kAnsiBlue}},
+        {"mkv",   {"\uF03D", kAnsiBlue}},
+        {"mov",   {"\uF03D", kAnsiBlue}},
+        {"avi",   {"\uF03D", kAnsiBlue}},
+        {"webm",  {"\uF03D", kAnsiBlue}},
+        {"wmv",   {"\uF03D", kAnsiBlue}},
         // docs / archives / misc
-        {"pdf",   "\uF1C1"}, //  pdf
-        {"doc",   "\uF1C2"},
-        {"docx",  "\uF1C2"},
-        {"xls",   "\uF1C3"},
-        {"xlsx",  "\uF1C3"},
-        {"ppt",   "\uF1C4"},
-        {"pptx",  "\uF1C4"},
-        {"zip",   "\uF187"}, //  archive
-        {"tar",   "\uF187"},
-        {"gz",    "\uF187"},
-        {"bz2",   "\uF187"},
-        {"xz",    "\uF187"},
-        {"7z",    "\uF187"},
-        {"rar",   "\uF187"},
-        {"lock",  "\uF023"}, //  lock
-        {"log",   "\uF4D8"}, //  log
-        {"wasm",  "\uE6A1"}, //  wasm
+        {"pdf",   {"\uF1C1", kAnsiRed}},
+        {"doc",   {"\uF1C2", kAnsiBlue}},
+        {"docx",  {"\uF1C2", kAnsiBlue}},
+        {"xls",   {"\uF1C3", kAnsiGreen}},
+        {"xlsx",  {"\uF1C3", kAnsiGreen}},
+        {"ppt",   {"\uF1C4", kAnsiRed}},
+        {"pptx",  {"\uF1C4", kAnsiRed}},
+        {"zip",   {"\uF187", kAnsiRed}},
+        {"tar",   {"\uF187", kAnsiRed}},
+        {"gz",    {"\uF187", kAnsiRed}},
+        {"bz2",   {"\uF187", kAnsiRed}},
+        {"xz",    {"\uF187", kAnsiRed}},
+        {"7z",    {"\uF187", kAnsiRed}},
+        {"rar",   {"\uF187", kAnsiRed}},
+        {"lock",  {"\uF023", kAnsiGray}},
+        {"log",   {"\uF4D8", kAnsiGray}},
+        {"wasm",  {"\uE6A1", kAnsiPurple}},
+        {"txt",   {"\uF15C", kAnsiFg}},
+        {"csv",   {"\uF15C", kAnsiGreen}},
+        {"vue",   {"\uFD42", kAnsiGreen}},
+        {"svelte",{"\uE697", kAnsiRed}},
+        {"astro", {"\uE207", kAnsiPurple}},
     };
     return table;
 }
 
-// Exact-filename matches (case-insensitive). These are matched on the
-// basename, not the extension, because Node's path.extname() returns "" for
-// pure dot-files like .gitignore, so they need an explicit lookup.
-static std::optional<std::string> iconForExactName(const std::string& baseName) {
-    static const std::unordered_map<std::string, std::string> names = {
-        {"dockerfile",   "\uF308"}, //  docker
-        {"containerfile","\uF308"},
-        {"makefile",     "\uE779"}, //  gnu makefile
-        {"rakefile",     "\uE779"},
-        {"license",      "\uF02D"}, //  license
-        {"licence",      "\uF02D"},
-        {"copying",      "\uF02D"},
+static std::optional<IconInfo> iconForExactName(const std::string& baseName) {
+    static const std::unordered_map<std::string, IconInfo> names = {
+        {"dockerfile",   {"\uF308", kAnsiBlue}},
+        {"containerfile",{"\uF308", kAnsiBlue}},
+        {"makefile",     {"\uE779", kAnsiGray}},
+        {"rakefile",     {"\uE779", kAnsiRed}},
+        {"license",      {"\uF02D", kAnsiYellow}},
+        {"licence",      {"\uF02D", kAnsiYellow}},
+        {"copying",      {"\uF02D", kAnsiYellow}},
         // dotfiles
-        {".gitignore",    "\uF1D3"}, //  git
-        {".gitattributes","\uF1D3"},
-        {".gitmodules",   "\uF1D3"},
-        {".gitkeep",      "\uF1D3"},
-        {".env",          "\uF462"}, //  env
-        {".envrc",        "\uF462"},
-        {".dockerignore", "\uF308"},
-        {".editorconfig", "\uE615"}, //  config
-        {".npmrc",        "\uE71E"}, //  npm
-        {".nvmrc",        "\uE71E"},
-        {".prettierrc",   "\uE60B"}, //  json-ish
-        {".eslintrc",     "\uE60B"},
-        {".babelrc",      "\uE60B"},
+        {".gitignore",    {"\uF1D3", kAnsiRed}},
+        {".gitattributes",{"\uF1D3", kAnsiRed}},
+        {".gitmodules",   {"\uF1D3", kAnsiRed}},
+        {".gitkeep",      {"\uF1D3", kAnsiRed}},
+        {".env",          {"\uF462", kAnsiYellow}},
+        {".envrc",        {"\uF462", kAnsiYellow}},
+        {".dockerignore", {"\uF308", kAnsiGray}},
+        {".editorconfig", {"\uE615", kAnsiFg}},
+        {".npmrc",        {"\uE71E", kAnsiRed}},
+        {".nvmrc",        {"\uE71E", kAnsiRed}},
+        {".prettierrc",   {"\uE60B", kAnsiGreen}},
+        {".eslintrc",     {"\uE60B", kAnsiGreen}},
+        {".babelrc",      {"\uE60B", kAnsiYellow}},
+        // Directories:
+        {"node_modules",  {"\uE718", kAnsiGreen}},
+        {".git",          {"\uE5FB", kAnsiRed}},
+        {".github",       {"\uE40A", kAnsiFg}},
+        {".vscode",       {"\uE70C", kAnsiBlue}},
     };
     std::string lower = baseName;
     std::transform(lower.begin(), lower.end(), lower.begin(),
         [](unsigned char c) { return std::tolower(c); });
     auto it = names.find(lower);
     if (it != names.end()) return it->second;
-    // README, README.md, README.txt, etc. -- any extension.
-    if (lower.rfind("readme", 0) == 0) return std::string("\uF7FB"); //  book
+    // README
+    if (lower.rfind("readme", 0) == 0) return IconInfo{"\uE609", kAnsiYellow};
     return std::nullopt;
 }
 
-// Pick the icon for a tree entry. Directories always get the folder glyph;
-// files go through the exact-name table first, then the extension table, and
-// finally fall back to the generic file glyph so the tree is never blank.
-static std::string iconForName(const std::string& baseName, bool isDir) {
-    if (isDir) return "\uF07B"; //  folder (closed)
+static IconInfo getIconInfo(const std::string& baseName, bool isDir) {
     auto exact = iconForExactName(baseName);
     if (exact.has_value()) return *exact;
+    if (isDir) return {"\uF07B", kAnsiBlue}; // folder
+
     std::string extWithDot = nodeExtname(baseName);
     if (!extWithDot.empty()) {
         std::string ext = extWithDot.substr(1);
@@ -383,7 +403,7 @@ static std::string iconForName(const std::string& baseName, bool isDir) {
         auto it = table.find(ext);
         if (it != table.end()) return it->second;
     }
-    return "\uF15B"; //  generic file
+    return {"\uF15B", kAnsiFg}; // generic file
 }
 
 // ---------------------------------------------------------------------------
@@ -757,8 +777,7 @@ static constexpr int kTreeInfiniteDepth = -1;
 // only emitted when stdout is a TTY that supports ANSI escapes and the user
 // hasn't opted out via NO_COLOR / TERM=dumb.
 // ---------------------------------------------------------------------------
-static constexpr const char* kAnsiReset = "\033[0m";
-static constexpr const char* kAnsiDir   = "\033[1;34m"; // bold blue
+// Colors moved up above iconTable()
 
 static bool supportsAnsiColor() {
     static const bool cached = []() -> bool {
@@ -767,8 +786,6 @@ static bool supportsAnsiColor() {
         const char* term = std::getenv("TERM");
         if (term && std::string(term) == "dumb") return false;
 #ifdef _WIN32
-        // Enable virtual-terminal processing; this only succeeds when stdout
-        // is an actual console, so a single check covers TTY detection too.
         HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
         DWORD mode = 0;
         if (h == INVALID_HANDLE_VALUE || !GetConsoleMode(h, &mode)) return false;
@@ -781,50 +798,43 @@ static bool supportsAnsiColor() {
     return cached;
 }
 
-// Colorize a tree entry name; `isDir` and `color` control whether any ANSI
-// escape is emitted (the caller decides once whether this stream is color
-// capable).
-static std::string colorName(const std::string& name, bool isDir, bool color) {
-    if (!isDir || !color) return name;
-    return std::string(kAnsiDir) + name + kAnsiReset;
-}
-
 static void walkTree(const fs::path& root, int depth, int maxDepth,
                      const std::string& prefix, bool last, bool color, std::ostream& out) {
     if (maxDepth != kTreeInfiniteDepth && depth > maxDepth) return;
     std::error_code ec;
-    // Append a trailing "/" to directory names so folders stand out from files.
     bool isDir = fs::is_directory(root, ec);
     std::string baseName = root.filename().string();
-    std::string labeled = colorName(baseName + (isDir ? "/" : ""), isDir, color);
-    // Prepend a Nerd Font glyph when the stream can render them. Icons are
-    // gated on the same TTY/NO_COLOR check as the color escapes so piping
-    // the tree into another tool yields plain text.
+    
+    std::string suffix = isDir ? "/" : "";
+    std::string labeled = baseName + suffix;
+
     if (color) {
-        std::string icon = iconForName(baseName, isDir);
-        // Same bold blue around the icon as the directory name so directories
-        // stay visually cohesive; files get the uncolored glyph.
-        if (isDir) {
-            // `labeled` already carries its own ANSI wrap; only add the color
-            // around the icon and rely on the existing reset at end of name.
-            labeled = std::string(kAnsiDir) + icon + kAnsiReset + "  " + labeled;
-        } else {
-            labeled = icon + "  " + labeled;
-        }
+        IconInfo info = getIconInfo(baseName, isDir);
+        std::string nameColor = isDir ? kAnsiBlue : kAnsiFg;
+        labeled = std::string(info.color) + info.icon + kAnsiReset + "  " + 
+                  nameColor + baseName + suffix + kAnsiReset;
+    } else {
+        IconInfo info = getIconInfo(baseName, isDir);
+        labeled = std::string(info.icon) + "  " + labeled;
     }
+
     if (depth == 0) {
         out << labeled << "\n";
     } else {
-        out << prefix << (last ? "\u2514\u2500\u2500 " : "\u251c\u2500\u2500 ")
-            << labeled << "\n";
+        if (color) out << kAnsiGray;
+        out << prefix << (last ? "\u2514\u2500\u2500 " : "\u251c\u2500\u2500 ");
+        if (color) out << kAnsiReset;
+        out << labeled << "\n";
     }
 
+    if (!isDir) return;
     if (maxDepth != kTreeInfiniteDepth && depth == maxDepth) return;
+    if (depth > 0 && shouldSkip(baseName)) return; // Show it but don't go inside
+
     std::vector<fs::directory_entry> entries;
     for (auto it = fs::directory_iterator(root, ec);
          it != fs::directory_iterator(); it.increment(ec)) {
         if (ec) break;
-        if (shouldSkip(it->path().filename().string())) continue;
         entries.push_back(*it);
     }
     std::sort(entries.begin(), entries.end(),
@@ -833,7 +843,10 @@ static void walkTree(const fs::path& root, int depth, int maxDepth,
         });
     for (size_t i = 0; i < entries.size(); ++i) {
         bool isLast = (i + 1 == entries.size());
-        std::string nextPrefix = prefix + (last ? "    " : "\u2502   ");
+        std::string nextPrefix = prefix;
+        if (depth > 0) {
+            nextPrefix += (last ? "    " : "\u2502   ");
+        }
         walkTree(entries[i].path(), depth + 1, maxDepth, nextPrefix, isLast, color, out);
     }
 }
