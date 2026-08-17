@@ -702,6 +702,70 @@ static void doCopy(const fs::path& oldP, const fs::path& newP) {
     if (ec) log(ec.message());
 }
 
+static fs::path getHomeDir() {
+    const char* home = std::getenv("HOME");
+    if (!home) home = std::getenv("USERPROFILE");
+    return home ? fs::path(home) : fs::current_path();
+}
+
+static fs::path settingJsonPath() {
+    return getHomeDir() / ".you" / "setting.json";
+}
+
+struct AppSettings {
+    std::string editor = "nano";
+    std::string trash = (getHomeDir() / ".you" / ".trash").string();
+    int treeDepth = 3;
+    bool confirmCreate = false;
+    std::vector<std::string> excludeFolders = {"node_modules", ".git"};
+};
+
+static AppSettings getGlobalSettings() {
+    static AppSettings s = []() {
+        AppSettings def;
+        fs::path path = settingJsonPath();
+        std::error_code ec;
+        if (fs::exists(path, ec)) {
+            std::ifstream in(path);
+            std::ostringstream ss; ss << in.rdbuf();
+            std::string existing = ss.str();
+            
+            std::string ed = extractJsonStringField(existing, "editor");
+            if (!ed.empty()) def.editor = ed;
+            std::string tr = extractJsonStringField(existing, "trash");
+            if (!tr.empty()) def.trash = tr;
+            std::string td = extractJsonStringField(existing, "tree_depth");
+            if (!td.empty()) { try { def.treeDepth = std::stoi(td); } catch (...) {} }
+            std::string cc = extractJsonStringField(existing, "confirm_create");
+            if (!cc.empty()) def.confirmCreate = (cc == "y" || cc == "Y" || cc == "yes" || cc == "true");
+            std::string ex = extractJsonStringField(existing, "exclude_folders");
+            if (!ex.empty()) {
+                def.excludeFolders.clear();
+                std::stringstream ssEx(ex);
+                std::string token;
+                while (std::getline(ssEx, token, ',')) {
+                    // simple trim for spaces
+                    size_t a = 0, b = token.size();
+                    while (a < b && std::isspace(static_cast<unsigned char>(token[a]))) ++a;
+                    while (b > a && std::isspace(static_cast<unsigned char>(token[b - 1]))) --b;
+                    std::string t = token.substr(a, b - a);
+                    if (!t.empty()) def.excludeFolders.push_back(t);
+                }
+            }
+        }
+        return def;
+    }();
+    return s;
+}
+
+static bool shouldSkip(const std::string& name) {
+    const auto& excludes = getGlobalSettings().excludeFolders;
+    for (const auto& ex : excludes) {
+        if (name == ex) return true;
+    }
+    return false;
+}
+
 // ---------------------------------------------------------------------------
 // -trash : move target into ./.trash/<unix-timestamp>/<basename> and write a
 // small meta.json sidecar with the original absolute path so the user can
@@ -732,7 +796,7 @@ static void doTrash(const fs::path& p) {
     // Capture the original absolute path before renaming the target away.
     std::error_code ec;
     std::string origAbsolute = fs::absolute(p, ec).string();
-    fs::path trashRoot = fs::current_path() / ".trash" / std::to_string(nowUnix());
+    fs::path trashRoot = fs::path(getGlobalSettings().trash) / std::to_string(nowUnix());
     fs::create_directories(trashRoot, ec);
     if (ec) { log(ec.message()); return; }
     std::string origName = p.filename().string();
@@ -764,9 +828,7 @@ static void doTrash(const fs::path& p) {
 // back to plain ASCII because supportsAnsiColor() returns false in that
 // case -- same gate that controls the bold-blue directory color.
 // ---------------------------------------------------------------------------
-static bool shouldSkip(const std::string& name) {
-    return name == "node_modules" || name == ".git";
-}
+
 
 // Sentinel value for "unlimited depth" (e.g. `-t=`).
 static constexpr int kTreeInfiniteDepth = -1;
@@ -941,16 +1003,14 @@ static std::string resolveDollarPrefix(const std::string& arg) {
 // --setting : interactive prompts that build a setting.json next to the
 // binary. The defaults are taken from an existing setting.json if present.
 // ---------------------------------------------------------------------------
-static fs::path settingJsonPath() {
-    // Unlike the package.json lookup used for -v, settings are read from and
-    // written to the current working directory.
-    return fs::current_path() / "setting.json";
-}
-
 static std::string readLineTrimmed() {
     std::string s;
     std::getline(std::cin, s);
-    return trim(s);
+    // trim is defined above
+    size_t a = 0, b = s.size();
+    while (a < b && std::isspace(static_cast<unsigned char>(s[a]))) ++a;
+    while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1]))) --b;
+    return s.substr(a, b - a);
 }
 
 static std::string settingDefault(const std::string& existing, const std::string& key, const std::string& fallback) {
@@ -958,40 +1018,127 @@ static std::string settingDefault(const std::string& existing, const std::string
     return v.empty() ? fallback : v;
 }
 
-// Prompt for one setting; Enter keeps the current (or default) value. `label`
-// is left-justified to a fixed width so the brackets line up.
 static std::string promptSetting(const std::string& existing, const std::string& key,
                                  const std::string& fallback, const std::string& label) {
     std::string current = settingDefault(existing, key, fallback);
-    std::cout << "  " << std::left << std::setw(22) << label
+    std::cout << "  \033[1;36m" << std::left << std::setw(30) << label << "\033[0m "
               << "[" << current << "]: " << std::flush;
     std::string value = readLineTrimmed();
     return value.empty() ? current : value;
 }
 
+static std::string promptExcludeFolders(const std::string& existing) {
+    std::string current = settingDefault(existing, "exclude_folders", "node_modules,.git");
+    while (true) {
+        std::cout << "  \033[1;36m" << std::left << std::setw(30) << "Exclude folders" << "\033[0m "
+                  << "[" << current << "]\n";
+        std::cout << "    (Use '-a: dir1, dir2' to add, '-r: dir1, dir2' to remove, or Enter to keep): ";
+        std::string input = readLineTrimmed();
+        if (input.empty()) {
+            break;
+        }
+
+        std::vector<std::string> currentList;
+        std::stringstream ssEx(current);
+        std::string token;
+        while (std::getline(ssEx, token, ',')) {
+            token = trim(token);
+            if (!token.empty()) currentList.push_back(token);
+        }
+
+        size_t idx = 0;
+        int currentMode = 0; // 0 = none, 1 = add, 2 = remove
+        std::string buf;
+        bool valid = true;
+
+        auto flushBuf = [&]() {
+            if (currentMode == 0) {
+                if (!trim(buf).empty()) valid = false;
+                buf.clear();
+                return;
+            }
+            std::stringstream ss(buf);
+            std::string t;
+            while (std::getline(ss, t, ',')) {
+                t = trim(t);
+                if (!t.empty() && t.back() == '.') t.pop_back();
+                t = trim(t);
+                if (t.empty()) continue;
+
+                if (currentMode == 1) {
+                    if (std::find(currentList.begin(), currentList.end(), t) == currentList.end()) {
+                        currentList.push_back(t);
+                    }
+                } else if (currentMode == 2) {
+                    auto it = std::remove(currentList.begin(), currentList.end(), t);
+                    currentList.erase(it, currentList.end());
+                }
+            }
+            buf.clear();
+        };
+
+        while (idx < input.size()) {
+            if (input.compare(idx, 3, "-a:") == 0) {
+                flushBuf();
+                if (!valid) break;
+                currentMode = 1;
+                idx += 3;
+            } else if (input.compare(idx, 3, "-r:") == 0) {
+                flushBuf();
+                if (!valid) break;
+                currentMode = 2;
+                idx += 3;
+            } else {
+                buf += input[idx];
+                idx++;
+            }
+        }
+        flushBuf();
+
+        if (!valid) {
+            std::cout << "    \033[1;31mInvalid format! Use '-a: ...' or '-r: ...'\033[0m\n";
+            continue;
+        }
+
+        current.clear();
+        for (size_t i = 0; i < currentList.size(); ++i) {
+            current += currentList[i];
+            if (i + 1 < currentList.size()) current += ",";
+        }
+    }
+    return current;
+}
+
 static void doSetting() {
     fs::path path = settingJsonPath();
+    std::error_code ec;
+    fs::create_directories(path.parent_path(), ec);
     std::string existing;
-    {
+    if (fs::exists(path, ec)) {
         std::ifstream in(path);
         std::ostringstream ss; ss << in.rdbuf();
         existing = ss.str();
     }
-    std::cout << "Configure You (press Enter to accept defaults)\n";
-    std::string editor  = promptSetting(existing, "editor", "nano", "default editor");
-    std::string trash   = promptSetting(existing, "trash", ".trash", "trash path");
-    std::string depth   = promptSetting(existing, "tree_depth", "3", "tree depth");
-    std::string confirm = promptSetting(existing, "confirm_create", "n", "confirm on create?");
+    std::cout << "\n\033[1;34m=== You CLI Configuration ===\033[0m\n";
+    std::cout << "Saving to: " << path.string() << "\n";
+    std::cout << "(Press Enter to accept current defaults)\n\n";
+
+    std::string editor  = promptSetting(existing, "editor", "nano", "Default editor");
+    std::string trash   = promptSetting(existing, "trash", (getHomeDir() / ".you" / ".trash").string(), "Trash directory path");
+    std::string depth   = promptSetting(existing, "tree_depth", "3", "Default tree depth");
+    std::string confirm = promptSetting(existing, "confirm_create", "n", "Confirm on create? (y/n)");
+    std::string exclude = promptExcludeFolders(existing);
 
     std::ofstream out(path, std::ios::trunc | std::ios::binary);
-    if (!out) { log("cannot write " + path.string()); return; }
+    if (!out) { std::cerr << "cannot write " << path.string() << "\n"; return; }
     out << "{\n"
         << "  \"editor\": \"" << editor << "\",\n"
         << "  \"trash\": \"" << trash << "\",\n"
         << "  \"tree_depth\": \"" << depth << "\",\n"
-        << "  \"confirm_create\": \"" << confirm << "\"\n"
+        << "  \"confirm_create\": \"" << confirm << "\",\n"
+        << "  \"exclude_folders\": \"" << exclude << "\"\n"
         << "}\n";
-    std::cout << "Wrote " << path.string() << "\n";
+    std::cout << "\n\033[1;32m\u2714 Settings saved successfully.\033[0m\n\n";
 }
 
 // ---------------------------------------------------------------------------
